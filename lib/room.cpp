@@ -321,11 +321,10 @@ public:
 
     /*! Apply redaction to the timeline
      *
-     * Tries to find an event in the timeline and redact it; deletes the
-     * redaction event whether the redacted event was found or not.
-     * \return true if the event has been found and redacted; false otherwise
+     * Tries to find events in the timeline and redact them.
+     * \return the list of event ids that were NOT found and redacted
      */
-    bool processRedaction(const RedactionEvent& redaction);
+    QStringList processRedaction(const RedactionEvent& redaction);
 
     /*! Apply a new revision of the event to the timeline
      *
@@ -1989,54 +1988,61 @@ RoomEventPtr makeRedacted(const RoomEvent& target,
     return loadEvent<RoomEvent>(originalJson);
 }
 
-bool Room::Private::processRedaction(const RedactionEvent& redaction)
+QStringList Room::Private::processRedaction(const RedactionEvent& redaction)
 {
+    QStringList unredactedIds;
     // Can't use findInTimeline because it returns a const iterator, and
     // we need to change the underlying TimelineItem.
-    const auto pIdx = eventsIndex.find(redaction.redactedEvent());
-    if (pIdx == eventsIndex.end())
-        return false;
-
-    Q_ASSERT(q->isValidIndex(*pIdx));
-
-    auto& ti = timeline[Timeline::size_type(*pIdx - q->minTimelineIndex())];
-    if (ti->isRedacted() && ti->redactedBecause()->id() == redaction.id()) {
-        qCDebug(EVENTS) << "Redaction" << redaction.id() << "of event"
-                        << ti->id() << "already done, skipping";
-        return true;
-    }
-
-    // Make a new event from the redacted JSON and put it in the timeline
-    // instead of the redacted one. oldEvent will be deleted on return.
-    auto oldEvent = ti.replaceEvent(makeRedacted(*ti, redaction));
-    qCDebug(EVENTS) << "Redacted" << oldEvent->id() << "with" << redaction.id();
-    if (oldEvent->isStateEvent()) {
-        const StateEventKey evtKey { oldEvent->matrixType(),
-                                     oldEvent->stateKey() };
-        Q_ASSERT(currentState.contains(evtKey));
-        if (currentState.value(evtKey) == oldEvent.get()) {
-            Q_ASSERT(ti.index() >= 0); // Historical states can't be in
-                                       // currentState
-            qCDebug(EVENTS).nospace()
-                << "Redacting state " << oldEvent->matrixType() << "/"
-                << oldEvent->stateKey();
-            // Retarget the current state to the newly made event.
-            if (q->processStateEvent(*ti))
-                emit q->namesChanged(q);
-            updateDisplayname();
+    const auto& eventIds = redaction.redactedEvents();
+    for (const auto& evtId: eventIds) {
+        const auto pIdx = eventsIndex.find(evtId);
+        if (pIdx == eventsIndex.end()) {
+            unredactedIds.push_back(evtId);
+            continue;
         }
-    }
-    if (const auto* reaction = eventCast<ReactionEvent>(oldEvent)) {
-        const auto& targetEvtId = reaction->relation().eventId;
-        const auto lookupKey =
-            qMakePair(targetEvtId, EventRelation::Annotation());
-        if (relations.contains(lookupKey)) {
-            relations[lookupKey].removeOne(reaction);
+
+        Q_ASSERT(q->isValidIndex(*pIdx));
+
+        auto& ti = timeline[Timeline::size_type(*pIdx - q->minTimelineIndex())];
+        if (ti->isRedacted() && ti->redactedBecause()->id() == redaction.id()) {
+            qCDebug(EVENTS) << "Redaction" << redaction.id() << "of event"
+                            << ti->id() << "already done, skipping";
+            continue;
         }
+
+        // Make a new event from the redacted JSON and put it in the timeline
+        // instead of the redacted one. oldEvent will be deleted on return.
+        auto oldEvent = ti.replaceEvent(makeRedacted(*ti, redaction));
+        qCDebug(EVENTS) << "Redacted" << oldEvent->id() << "with"
+                        << redaction.id();
+        if (oldEvent->isStateEvent()) {
+            const StateEventKey evtKey { oldEvent->matrixType(),
+                                         oldEvent->stateKey() };
+            Q_ASSERT(currentState.contains(evtKey));
+            if (currentState.value(evtKey) == oldEvent.get()) {
+                Q_ASSERT(ti.index() >= 0); // Historical states can't be in
+                                           // currentState
+                qCDebug(EVENTS).nospace()
+                    << "Redacting state " << oldEvent->matrixType() << "/"
+                    << oldEvent->stateKey();
+                // Retarget the current state to the newly made event.
+                if (q->processStateEvent(*ti))
+                    emit q->namesChanged(q);
+                updateDisplayname();
+            }
+        }
+        if (const auto* reaction = eventCast<ReactionEvent>(oldEvent)) {
+            const auto& targetEvtId = reaction->relation().eventId;
+            const auto lookupKey =
+                qMakePair(targetEvtId, EventRelation::Annotation());
+            if (relations.contains(lookupKey)) {
+                relations[lookupKey].removeOne(reaction);
+            }
+        }
+        q->onRedaction(*oldEvent, *ti);
+        emit q->replacedEvent(ti.event(), rawPtr(oldEvent));
     }
-    q->onRedaction(*oldEvent, *ti);
-    emit q->replacedEvent(ti.event(), rawPtr(oldEvent));
-    return true;
+    return unredactedIds;
 }
 
 /** Make a replaced event
@@ -2120,20 +2126,21 @@ Room::Changes Room::Private::addNewMessageEvents(RoomEvents&& events)
         for (const auto& eptr : RoomEventsRange(it, events.end())) {
             if (auto* r = eventCast<RedactionEvent>(eptr)) {
                 // Try to find the target in the timeline, then in the batch.
-                if (processRedaction(*r))
-                    continue;
-                auto targetIt = std::find_if(events.begin(), it,
-                                             [id = r->redactedEvent()](
-                                                 const RoomEventPtr& ep) {
-                                                 return ep->id() == id;
-                                             });
-                if (targetIt != it)
-                    *targetIt = makeRedacted(**targetIt, *r);
-                else
-                    qCDebug(EVENTS)
-                        << "Redaction" << r->id() << "ignored: target event"
-                        << r->redactedEvent() << "is not found";
-                // If the target event comes later, it comes already redacted.
+                const auto unredactedIds = processRedaction(*r);
+                for (const auto& idToRedact: unredactedIds) {
+                    if (auto targetIt =
+                            std::find_if(events.begin(), it,
+                                         [idToRedact](const RoomEventPtr& ep) {
+                                             return ep->id() == idToRedact;
+                                         });
+                            targetIt != it)
+                        *targetIt = makeRedacted(**targetIt, *r);
+                    else
+                        qCDebug(EVENTS)
+                            << "Target event" << idToRedact << "in redaction"
+                            << r->id() << "is not found";
+                    // If the target event comes later, it comes already redacted.
+                }
             }
             if (auto* msg = eventCast<RoomMessageEvent>(eptr)) {
                 if (!msg->replacedEvent().isEmpty()) {
