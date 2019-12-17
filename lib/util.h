@@ -296,3 +296,12 @@ QString serverPart(const QString& mxId);
 } // namespace Quotient
 /// \deprecated Use namespace Quotient instead
 namespace QMatrixClient = Quotient;
+
+#if QT_VERSION < QT_VERSION_CHECK(5, 7, 0)
+
+template <class T>
+constexpr std::add_const_t<T>& qAsConst(T& t) noexcept
+{
+    return t;
+}
+#endif // QT_VERSION < QT_VERSION_CHECK(5, 7, 0)

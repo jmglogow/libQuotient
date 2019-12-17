@@ -26,6 +26,10 @@
 #include <QtCore/QUrlQuery>
 #include <QtCore/QMetaEnum>
 
+#if QT_VERSION < QT_VERSION_CHECK(5, 8, 0)
+#include <chrono>
+#endif // QT_VERSION < QT_VERSION_CHECK(5, 8, 0)
+
 class QNetworkReply;
 class QSslError;
 

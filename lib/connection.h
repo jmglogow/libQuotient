@@ -37,7 +37,9 @@ class Account;
 }
 
 namespace Quotient {
+#if QT_VERSION >= QT_VERSION_CHECK(5, 8, 0)
 Q_NAMESPACE
+#endif // QT_VERSION >= QT_VERSION_CHECK(5, 8, 0)
 
 class Room;
 class User;
@@ -95,7 +97,9 @@ static inline user_factory_t defaultUserFactory()
  */
 enum RunningPolicy { ForegroundRequest = 0x0, BackgroundRequest = 0x1 };
 
+#if QT_VERSION >= QT_VERSION_CHECK(5, 8, 0)
 Q_ENUM_NS(RunningPolicy)
+#endif
 
 // Room ids, rather than room pointers, are used in the direct chat
 // map types because the library keeps Invite rooms separate from
