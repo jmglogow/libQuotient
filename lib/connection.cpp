@@ -19,7 +19,9 @@
 #include "connection.h"
 
 #include "connectiondata.h"
+#ifdef E2EE_ENABLED
 #include "encryptionmanager.h"
+#endif // E2EE_ENABLED
 #include "room.h"
 #include "settings.h"
 #include "user.h"
@@ -43,7 +45,9 @@
 #include "jobs/mediathumbnailjob.h"
 #include "jobs/syncjob.h"
 
+#ifdef E2EE_ENABLED
 #include "account.h" // QtOlm
+#endif // E2EE_ENABLED
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
@@ -107,7 +111,9 @@ public:
     GetCapabilitiesJob* capabilitiesJob = nullptr;
     GetCapabilitiesJob::Capabilities capabilities;
 
+#ifdef E2EE_ENABLED
     QScopedPointer<EncryptionManager> encryptionManager;
+#endif // E2EE_ENABLED
 
     SyncJob* syncJob = nullptr;
 
@@ -153,6 +159,10 @@ public:
 
     RoomEventPtr sessionDecryptMessage(const EncryptedEvent& encryptedEvent)
     {
+#ifndef E2EE_ENABLED
+        qCWarning(E2EE) << "End-to-end encryption (E2EE) support is turned off.";
+        return {};
+#else // E2EE_ENABLED
         if (encryptedEvent.algorithm() != OlmV1Curve25519AesSha2AlgoKey)
         {
             return {};
@@ -208,6 +218,7 @@ public:
         }
 
         return decryptedEvent;
+#endif // E2EE_ENABLED
     }
 };
 
@@ -304,8 +315,12 @@ void Connection::doConnectToServer(const QString& user, const QString& password,
     connect(loginJob, &BaseJob::success, this, [this, loginJob] {
         d->connectWithToken(loginJob->userId(), loginJob->accessToken(),
                             loginJob->deviceId());
+#ifndef E2EE_ENABLED
+    qCWarning(E2EE) << "End-to-end encryption (E2EE) support is turned off.";
+#else // E2EE_ENABLED
         d->encryptionManager->uploadIdentityKeys(this);
         d->encryptionManager->uploadOneTimeKeys(this);
+#endif // E2EE_ENABLED
     });
     connect(loginJob, &BaseJob::failure, this, [this, loginJob] {
         emit loginError(loginJob->errorString(), loginJob->rawDataSample());
@@ -362,12 +377,16 @@ void Connection::Private::connectWithToken(const QString& userId,
     qCDebug(MAIN) << "Using server" << data->baseUrl().toDisplayString()
                   << "by user" << userId << "from device" << deviceId;
     AccountSettings accountSettings(userId);
+#ifndef E2EE_ENABLED
+    qCWarning(E2EE) << "End-to-end encryption (E2EE) support is turned off.";
+#else // E2EE_ENABLED
     encryptionManager.reset(
         new EncryptionManager(accountSettings.encryptionAccountPickle()));
     if (accountSettings.encryptionAccountPickle().isEmpty()) {
         accountSettings.setEncryptionAccountPickle(
             encryptionManager->olmAccountPickle());
     }
+#endif // E2EE_ENABLED
     emit q->stateChanged();
     emit q->connected();
     q->reloadCapabilities();
@@ -594,6 +613,9 @@ void Connection::onSyncSuccess(SyncData&& data, bool fromCache)
         d->dcLocalAdditions.clear();
         d->dcLocalRemovals.clear();
     }
+#ifndef E2EE_ENABLED
+    qCWarning(E2EE) << "End-to-end encryption (E2EE) support is turned off.";
+#else // E2EE_ENABLED
     // handling m.room_key to-device encrypted event
     for (auto&& toDeviceEvent : data.takeToDeviceEvents()) {
         if (toDeviceEvent->type() == EncryptedEvent::typeId()) {
@@ -645,6 +667,7 @@ void Connection::onSyncSuccess(SyncData&& data, bool fromCache)
         d->encryptionManager->updateOneTimeKeyCounts(this,
                                                      deviceOneTimeKeysCount);
     }
+#endif // E2EE_ENABLED
 }
 
 void Connection::stopSync()
@@ -1070,7 +1093,12 @@ QByteArray Connection::accessToken() const { return d->data->accessToken(); }
 
 QtOlm::Account* Connection::olmAccount() const
 {
+#ifndef E2EE_ENABLED
+    qCWarning(E2EE) << "End-to-end encryption (E2EE) support is turned off.";
+    return {};
+#else // E2EE_ENABLED
     return d->encryptionManager->account();
+#endif // E2EE_ENABLED
 }
 
 SyncJob* Connection::syncJob() const { return d->syncJob; }

@@ -1,3 +1,4 @@
+#ifdef E2EE_ENABLED
 #include "encryptionmanager.h"
 
 #include "connection.h"
@@ -366,3 +367,4 @@ bool EncryptionManager::Private::oneTimeKeyShouldUpload()
     }
     return false;
 }
+#endif // E2EE_ENABLED

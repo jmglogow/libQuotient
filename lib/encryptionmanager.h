@@ -1,3 +1,4 @@
+#ifdef E2EE_ENABLED
 #pragma once
 
 #include <QtCore/QObject>
@@ -43,3 +44,4 @@ private:
 };
 
 } // namespace Quotient
+#endif // E2EE_ENABLED
